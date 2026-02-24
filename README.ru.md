@@ -4,6 +4,12 @@ TUI-приложение для просмотра Java truststore (`JKS`/`PKCS1
 
 Основной README на английском: `README.md`.
 
+## Скриншот
+
+TUI запущен с дефолтным Java truststore (`cacerts`), в котором 144 сертификата.
+
+![Truststore TUI с cacerts](docs/truststore-tui-cacerts.png)
+
 ## Возможности
 
 - Загрузка truststore из локального файла.

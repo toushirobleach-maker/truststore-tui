@@ -4,6 +4,12 @@ Terminal UI tool to inspect Java truststores (`JKS`/`PKCS12`) and run TLS valida
 
 Russian documentation: see `README.ru.md`.
 
+## Screenshot
+
+TUI started with Java default truststore (`cacerts`) containing 144 certificates.
+
+![Truststore TUI with cacerts](docs/truststore-tui-cacerts.png)
+
 ## Features
 
 - Load truststore from local file.
