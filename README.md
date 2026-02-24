@@ -10,6 +10,10 @@ TUI started with Java default truststore (`cacerts`) containing 144 certificates
 
 ![Truststore TUI with cacerts](docs/truststore-tui-cacerts.png)
 
+TLS check example for `google.com:443` with matching aliases list.
+
+![Truststore TUI TLS check for google.com with matching aliases](docs/truststore-tui-google-aliases.png)
+
 ## Features
 
 - Load truststore from local file.

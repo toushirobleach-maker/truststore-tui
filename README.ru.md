@@ -10,6 +10,10 @@ TUI запущен с дефолтным Java truststore (`cacerts`), в кот�
 
 ![Truststore TUI с cacerts](docs/truststore-tui-cacerts.png)
 
+Пример TLS-проверки для `google.com:443` с выводом подходящих алиасов.
+
+![Truststore TUI TLS-проверка google.com с подходящими алиасами](docs/truststore-tui-google-aliases.png)
+
 ## Возможности
 
 - Загрузка truststore из локального файла.
