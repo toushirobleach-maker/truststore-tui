@@ -24,6 +24,7 @@ import com.googlecode.lanterna.gui2.TextBox;
 import com.googlecode.lanterna.gui2.dialogs.MessageDialogBuilder;
 import com.googlecode.lanterna.gui2.dialogs.MessageDialog;
 import com.googlecode.lanterna.gui2.dialogs.MessageDialogButton;
+import com.googlecode.lanterna.gui2.dialogs.TextInputDialogBuilder;
 import java.security.KeyStore;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -63,12 +64,13 @@ public final class TlsCheckDialog {
         TlsValidationService validationService,
         boolean aliasOnlyMode
     ) {
-        BasicWindow dialog = new BasicWindow("TLS Check");
+        BasicWindow dialog = ModalWindows.escClosable("TLS Check");
         dialog.setHints(java.util.List.of(BasicWindow.Hint.MODAL));
 
         Panel root = new Panel(new GridLayout(2));
         TextBox hostInput = new TextBox(new TerminalSize(48, 1));
         TextBox portInput = new TextBox("443");
+        TextBox certificatePathInput = new TextBox(new TerminalSize(48, 1));
         Label resultLabel = new Label("");
         CheckBox findMatchingCerts = new CheckBox("Find matching certificates");
 
@@ -76,6 +78,16 @@ public final class TlsCheckDialog {
         root.addComponent(hostInput);
         root.addComponent(new Label("Port"));
         root.addComponent(portInput);
+        root.addComponent(new Label("Certificate file"));
+        Panel certificatePathRow = new Panel(new LinearLayout(Direction.HORIZONTAL));
+        certificatePathRow.addComponent(certificatePathInput);
+        certificatePathRow.addComponent(new Button("Browse...", () -> {
+            String selectedPath = FileSystemPickerDialog.show(gui, certificatePathInput.getText());
+            if (selectedPath != null && !selectedPath.isBlank()) {
+                certificatePathInput.setText(selectedPath);
+            }
+        }));
+        root.addComponent(certificatePathRow);
         if (aliasOnlyMode) {
             root.addComponent(new Label("Mode"));
             root.addComponent(new Label("selected alias: " + selectedAlias));
@@ -124,6 +136,60 @@ public final class TlsCheckDialog {
                     );
                 });
             }, "alias-scan-worker");
+            worker.setDaemon(true);
+            worker.start();
+        }));
+        actions.addComponent(new Button("Check cert file", () -> {
+            String certificatePath = certificatePathInput.getText().trim();
+            String password = null;
+            ValidationResult baseResult = validationService.validateCertificateFile(certificatePath, keyStore, null);
+            if (!baseResult.success() && isPkcs12PasswordRequired(baseResult.message())) {
+                password = promptPkcs12Password(gui);
+                if (password == null) {
+                    resultLabel.setText("Cancelled");
+                    return;
+                }
+                baseResult = validationService.validateCertificateFile(certificatePath, keyStore, null, password);
+            }
+            boolean needAliasScan = !aliasOnlyMode && findMatchingCerts.isChecked();
+            if (!needAliasScan) {
+                ValidationResult result;
+                if (aliasOnlyMode) {
+                    result = validationService.validateCertificateFile(certificatePath, keyStore, selectedAlias, password);
+                } else {
+                    result = baseResult;
+                }
+                resultLabel.setText(result.success() ? "OK" : "FAIL");
+                showCertificateFileDetails(gui, result, certificatePath);
+                return;
+            }
+
+            String finalPassword = password;
+            ValidationResult finalBaseResult = baseResult;
+            resultLabel.setText("Checking aliases: 0/?");
+            Thread worker = new Thread(() -> {
+                AliasScanResult scanResult = validationService.findValidAliasesForCertificateFile(
+                    certificatePath,
+                    keyStore,
+                    finalPassword,
+                    progress -> gui.getGUIThread().invokeLater(() -> showProgress(resultLabel, progress))
+                );
+                Map<String, CertificateInfo> aliasDetails = buildAliasDetailsMap(keyStore);
+                gui.getGUIThread().invokeLater(() -> {
+                    resultLabel.setText(
+                        "Valid aliases: " + scanResult.validAliases().size() + "/" + scanResult.checkedAliases()
+                    );
+                    showCertificateFileResultWithAliasesDialog(
+                        gui,
+                        finalBaseResult,
+                        certificatePath,
+                        scanResult,
+                        aliasDetails,
+                        keyStore,
+                        validationService
+                    );
+                });
+            }, "cert-file-alias-scan-worker");
             worker.setDaemon(true);
             worker.start();
         }));
@@ -182,7 +248,7 @@ public final class TlsCheckDialog {
             MessageDialog.showMessageDialog(gui, "Matching aliases", "No valid aliases found.", MessageDialogButton.OK);
             return;
         }
-        BasicWindow dialog = new BasicWindow("Matching aliases");
+        BasicWindow dialog = ModalWindows.escClosable("Matching aliases");
         dialog.setHints(java.util.List.of(BasicWindow.Hint.MODAL));
         Table<String> table = new Table<>("Alias");
         for (String alias : scanResult.validAliases()) {
@@ -220,7 +286,7 @@ public final class TlsCheckDialog {
         KeyStore keyStore,
         TlsValidationService validationService
     ) {
-        BasicWindow dialog = new BasicWindow("TLS Result");
+        BasicWindow dialog = ModalWindows.escClosable("TLS Result");
         dialog.setHints(java.util.List.of(Window.Hint.MODAL));
 
         StringBuilder summary = new StringBuilder();
@@ -237,6 +303,66 @@ public final class TlsCheckDialog {
             }
         }
         summary.append("\nMatching certificates for ").append(host).append(':').append(port).append('\n');
+        summary.append("Checked: ").append(scanResult.checkedAliases()).append('\n');
+        summary.append("Valid: ").append(scanResult.validAliases().size()).append('\n');
+        summary.append("Failed: ").append(scanResult.failedAliases()).append('\n');
+        if (scanResult.error() != null && !scanResult.error().isBlank()) {
+            summary.append("Error: ").append(scanResult.error()).append('\n');
+        }
+
+        Panel root = new Panel(new LinearLayout(Direction.VERTICAL));
+        root.addComponent(new Label(summary.toString()).withBorder(Borders.singleLine("Summary")));
+
+        if (scanResult.validAliases().isEmpty()) {
+            root.addComponent(new Label("No aliases validated successfully."));
+            root.addComponent(new Button("Close", dialog::close));
+            dialog.setComponent(root);
+            gui.addWindowAndWait(dialog);
+            return;
+        }
+
+        Table<String> table = new Table<>("Valid aliases");
+        table.setPreferredSize(new TerminalSize(64, 12));
+        for (String alias : scanResult.validAliases()) {
+            table.getTableModel().addRow(alias);
+        }
+        table.setSelectedRow(0);
+        table.setSelectAction(() -> openAliasDetailsFromSelection(
+            gui, table, scanResult, aliasDetails, keyStore, validationService
+        ));
+
+        Panel actions = new Panel(new LinearLayout(Direction.HORIZONTAL));
+        actions.addComponent(new Button("View details", () -> openAliasDetailsFromSelection(
+            gui, table, scanResult, aliasDetails, keyStore, validationService
+        )));
+        actions.addComponent(new Button("Close", dialog::close));
+
+        root.addComponent(table.withBorder(Borders.singleLine("Matching aliases")));
+        root.addComponent(actions);
+        dialog.setComponent(root);
+        dialog.setFocusedInteractable(table);
+        gui.addWindowAndWait(dialog);
+    }
+
+    private static void showCertificateFileResultWithAliasesDialog(
+        MultiWindowTextGUI gui,
+        ValidationResult result,
+        String certificatePath,
+        AliasScanResult scanResult,
+        Map<String, CertificateInfo> aliasDetails,
+        KeyStore keyStore,
+        TlsValidationService validationService
+    ) {
+        BasicWindow dialog = ModalWindows.escClosable("Certificate File Result");
+        dialog.setHints(java.util.List.of(Window.Hint.MODAL));
+
+        StringBuilder summary = new StringBuilder();
+        summary.append(result.success() ? "OK\n" : "FAIL\n");
+        summary.append(normalizeCertificateValidationMessage(result.message())).append('\n');
+        if (certificatePath != null && !certificatePath.isBlank()) {
+            summary.append("File: ").append(certificatePath).append('\n');
+        }
+        summary.append("\nMatching certificates for file:\n");
         summary.append("Checked: ").append(scanResult.checkedAliases()).append('\n');
         summary.append("Valid: ").append(scanResult.validAliases().size()).append('\n');
         summary.append("Failed: ").append(scanResult.failedAliases()).append('\n');
@@ -346,6 +472,55 @@ public final class TlsCheckDialog {
             .setTitle("TLS Result")
             .setText(details.toString())
             .addButton(MessageDialogButton.OK)
+            .build()
+            .showDialog(gui);
+    }
+
+    private static void showCertificateFileDetails(
+        MultiWindowTextGUI gui,
+        ValidationResult result,
+        String certificatePath
+    ) {
+        StringBuilder details = new StringBuilder();
+        details.append(result.success() ? "OK\n" : "FAIL\n");
+        details.append(normalizeCertificateValidationMessage(result.message())).append('\n');
+        if (certificatePath != null && !certificatePath.isBlank()) {
+            details.append("\nFile: ").append(certificatePath).append('\n');
+        }
+        if (!result.peerChain().isEmpty()) {
+            details.append("\nParsed certificate chain:\n");
+            for (int i = 0; i < result.peerChain().size(); i++) {
+                ChainCertificateInfo cert = result.peerChain().get(i);
+                details.append(i + 1)
+                    .append(") subject=").append(cert.subject()).append('\n')
+                    .append("   issuer=").append(cert.issuer()).append('\n')
+                    .append("   notAfter=").append(DATE_FORMATTER.format(cert.notAfter())).append('\n');
+            }
+        }
+        new MessageDialogBuilder()
+            .setTitle("Certificate File Validation")
+            .setText(details.toString())
+            .addButton(MessageDialogButton.OK)
+            .build()
+            .showDialog(gui);
+    }
+
+    private static boolean isPkcs12PasswordRequired(String message) {
+        return message != null && message.startsWith(TlsValidationService.PKCS12_PASSWORD_REQUIRED_PREFIX);
+    }
+
+    private static String normalizeCertificateValidationMessage(String message) {
+        if (!isPkcs12PasswordRequired(message)) {
+            return message;
+        }
+        return message.substring(TlsValidationService.PKCS12_PASSWORD_REQUIRED_PREFIX.length()).trim();
+    }
+
+    private static String promptPkcs12Password(MultiWindowTextGUI gui) {
+        return new TextInputDialogBuilder()
+            .setTitle("PKCS12 password")
+            .setDescription("Enter password for PKCS12 container:")
+            .setInitialContent("")
             .build()
             .showDialog(gui);
     }

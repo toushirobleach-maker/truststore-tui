@@ -11,6 +11,7 @@ import com.googlecode.lanterna.gui2.Borders;
 import com.googlecode.lanterna.gui2.Button;
 import com.googlecode.lanterna.gui2.Direction;
 import com.googlecode.lanterna.gui2.GridLayout;
+import com.googlecode.lanterna.gui2.Interactable;
 import com.googlecode.lanterna.gui2.Label;
 import com.googlecode.lanterna.gui2.LinearLayout;
 import com.googlecode.lanterna.gui2.MultiWindowTextGUI;
@@ -38,6 +39,7 @@ public class MainScreen {
 
     private final CertificateListScreen certificateListScreen;
     private LoadedTruststore loadedTruststore;
+    private Interactable topMenuFocusTarget;
     private Label statusLabel;
     private Label loadedStoreLabel;
 
@@ -53,7 +55,11 @@ public class MainScreen {
         this.truststoreLoader = truststoreLoader;
         this.certificateViewService = certificateViewService;
         this.tlsValidationService = tlsValidationService;
-        this.certificateListScreen = new CertificateListScreen(gui, this::openTlsCheckForAliasOnly);
+        this.certificateListScreen = new CertificateListScreen(
+            gui,
+            this::openTlsCheckForAliasOnly,
+            this::focusTopMenu
+        );
     }
 
     public Panel create() {
@@ -66,6 +72,7 @@ public class MainScreen {
         sourceType.setCheckedItemIndex(0);
 
         TextBox sourceInput = new TextBox();
+        topMenuFocusTarget = sourceInput;
         loadedStoreLabel = new Label("No truststore loaded");
         statusLabel = new Label("");
         Panel sourceSelector = new Panel(new LinearLayout(Direction.HORIZONTAL));
@@ -113,6 +120,12 @@ public class MainScreen {
 
     public boolean handleGlobalKey(KeyStroke keyStroke) {
         return certificateListScreen.handleGlobalKey(keyStroke);
+    }
+
+    private void focusTopMenu() {
+        if (topMenuFocusTarget != null) {
+            topMenuFocusTarget.takeFocus();
+        }
     }
 
     private void loadStore(RadioBoxList<String> sourceType, String sourceValue) {
@@ -261,7 +274,7 @@ public class MainScreen {
 
     private StoreSourceType chooseSourceDialog(String title, String text) {
         final StoreSourceType[] selected = new StoreSourceType[1];
-        BasicWindow dialog = new BasicWindow(title);
+        BasicWindow dialog = ModalWindows.escClosable(title);
         dialog.setHints(java.util.List.of(BasicWindow.Hint.MODAL));
 
         Panel root = new Panel(new LinearLayout(Direction.VERTICAL));

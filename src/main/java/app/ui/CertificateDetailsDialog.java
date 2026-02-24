@@ -21,7 +21,7 @@ public final class CertificateDetailsDialog {
     }
 
     public static void show(MultiWindowTextGUI gui, CertificateInfo cert, Runnable onTlsOnlyThisCert) {
-        BasicWindow detailsWindow = new BasicWindow("Certificate details");
+        BasicWindow detailsWindow = ModalWindows.escClosable("Certificate details");
         detailsWindow.setHints(java.util.List.of(Window.Hint.MODAL));
 
         Panel root = new Panel(new LinearLayout(Direction.VERTICAL));

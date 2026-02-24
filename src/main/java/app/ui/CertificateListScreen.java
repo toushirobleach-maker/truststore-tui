@@ -43,6 +43,7 @@ public class CertificateListScreen {
 
     private final MultiWindowTextGUI gui;
     private final Consumer<String> aliasTlsRequestHandler;
+    private final Runnable onEscFromTable;
     private final Table<String> table;
     private final Panel panel;
     private final Label hotkeysLabel;
@@ -59,9 +60,14 @@ public class CertificateListScreen {
     private int subjectViewWidth = MIN_SUBJECT_VIEW_WIDTH;
     private int issuerViewWidth = MIN_ISSUER_VIEW_WIDTH;
 
-    public CertificateListScreen(MultiWindowTextGUI gui, Consumer<String> aliasTlsRequestHandler) {
+    public CertificateListScreen(
+        MultiWindowTextGUI gui,
+        Consumer<String> aliasTlsRequestHandler,
+        Runnable onEscFromTable
+    ) {
         this.gui = gui;
         this.aliasTlsRequestHandler = aliasTlsRequestHandler;
+        this.onEscFromTable = onEscFromTable;
         this.table = new Table<>("Alias", "Expiry", "Subject", "Issuer", "Status") {
             @Override
             public synchronized Interactable.Result handleKeyStroke(KeyStroke keyStroke) {
@@ -91,6 +97,10 @@ public class CertificateListScreen {
     public boolean handleGlobalKey(KeyStroke keyStroke) {
         if (!table.isFocused()) {
             return false;
+        }
+        if (keyStroke != null && keyStroke.getKeyType() == KeyType.Escape) {
+            onEscFromTable.run();
+            return true;
         }
         if (isSearchShortcut(keyStroke)) {
             openSearchDialog();
